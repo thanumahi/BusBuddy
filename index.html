@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>BusBuddy - College Bus Live GPS & Satellite Telemetry</title>
+  <meta name="description" content="Real-time College Bus Tracking with Google Satellite View, Smart Arrival Notifications, Student Roll Number Auth, and Interactive Stop Re-correction.">
+  
+  <!-- Modern Typography from Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons for crisp UI symbols -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  
+  <!-- Leaflet CSS for universal Satellite tile fallback rendering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  
+  <!-- Supabase JS Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
+  <!-- Leaflet JS (for seamless Satellite tile fallback and hybrid overlay) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark">
+  <div id="app" class="app-layout">
+    
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="nav-brand">
+        <div class="logo-icon-wrapper">
+          <i class="fa-solid fa-bus-simple"></i>
+          <span class="live-pulse-dot" title="Live Telemetry Active"></span>
+        </div>
+        <div class="brand-text">
+          <h1 class="brand-title">BusBuddy</h1>
+          <span class="brand-sub">College Telemetry & Stop Manager</span>
+        </div>
+      </div>
+
+      <!-- Realtime Connection Status Badge -->
+      <div class="nav-center">
+        <div id="connectionStatusBadge" class="status-badge connected">
+          <span class="pulse-ring"></span>
+          <i class="fa-solid fa-satellite-dish"></i>
+          <span id="connectionStatusText">Live Satellite Feed</span>
+        </div>
+        <div id="tripStatusBadge" class="status-badge trip-idle">
+          <i class="fa-solid fa-location-crosshairs"></i>
+          <span id="tripStatusText">Bus Idle</span>
+        </div>
+      </div>
+
+      <!-- User Role & Action Controls -->
+      <div class="nav-actions">
+        <!-- Notification Permission Bell -->
+        <button id="btnToggleAudio" class="icon-btn" title="Toggle Sound Chimes">
+          <i id="audioIcon" class="fa-solid fa-volume-high"></i>
+        </button>
+        <button id="btnNotificationPermission" class="icon-btn" title="Enable Stop Arrival Push Notifications">
+          <i class="fa-solid fa-bell"></i>
+          <span id="notifBadgeDot" class="badge-dot"></span>
+        </button>
+
+        <!-- Current User Profile Chip -->
+        <div id="userProfileChip" class="user-chip" onclick="BusBuddyApp.openAuthModal()">
+          <div class="user-avatar" id="userAvatar">
+            <i class="fa-solid fa-user-graduate"></i>
+          </div>
+          <div class="user-info">
+            <span class="user-name" id="userDisplayName">Guest Student</span>
+            <span class="user-role-tag" id="userRoleTag">Roll No: 2024CS101</span>
+          </div>
+          <i class="fa-solid fa-chevron-down chip-arrow"></i>
+        </div>
+
+        <!-- Global Settings Button -->
+        <button id="btnOpenSettings" class="icon-btn" title="Supabase & Google Maps Settings" onclick="BusBuddyApp.openSettingsModal()">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <main class="main-container">
+      
+      <!-- Left Floating Sidebar: Role Panels (Student / Driver / Stop Manager) -->
+      <aside class="sidebar-panel glassmorphism" id="sidebarPanel">
+        
+        <!-- Tab Navigation Switcher -->
+        <div class="tab-switcher">
+          <button class="tab-btn active" id="tabStudent" onclick="BusBuddyApp.switchTab('student')">
+            <i class="fa-solid fa-graduation-cap"></i> Student
+          </button>
+          <button class="tab-btn" id="tabDriver" onclick="BusBuddyApp.switchTab('driver')">
+            <i class="fa-solid fa-id-card"></i> Driver
+          </button>
+          <button class="tab-btn" id="tabStops" onclick="BusBuddyApp.switchTab('stops')">
+            <i class="fa-solid fa-map-location-dot"></i> Stops Manager
+          </button>
+        </div>
+
+        <!-- TAB 1: STUDENT TRACKING VIEW -->
+        <section id="studentView" class="tab-content active">
+          <div class="panel-card highlight-card">
+            <div class="card-header">
+              <span class="card-eyebrow">YOUR ACTIVE BUS ROUTE</span>
+              <span class="badge bus-number-badge" id="studentBusBadge">Bus-01</span>
+            </div>
+            <h3 class="route-title" id="studentRouteTitle">North Metro ➔ Tech Campus</h3>
+            <div class="driver-quick-info">
+              <i class="fa-solid fa-steering-wheel"></i>
+              <span id="studentDriverName">Driver: Rajesh Sharma</span>
+              <a href="tel:+919876543210" id="studentDriverPhone" class="phone-link" title="Call Driver">
+                <i class="fa-solid fa-phone"></i>
+              </a>
+            </div>
+          </div>
+
+          <!-- Student's Target Stop Selector -->
+          <div class="panel-card">
+            <label class="input-label" for="selectStudentStop">
+              <i class="fa-solid fa-location-dot text-accent"></i> Select Your Boarding / Drop Stop:
+            </label>
+            <div class="select-wrapper">
+              <select id="selectStudentStop" class="custom-select" onchange="BusBuddyApp.onStudentStopChange(this.value)">
+                <!-- Dynamically populated from Supabase bus_stops -->
+              </select>
+            </div>
+            
+            <!-- Proximity Alert Distance Trigger -->
+            <div class="proximity-config-box">
+              <div class="proximity-header">
+                <label for="proximityRadiusRange" class="sub-label">
+                  <i class="fa-solid fa-bell-ring"></i> Alert me before arriving:
+                </label>
+                <span class="proximity-val" id="proximityRadiusVal">500 m</span>
+              </div>
+              <input type="range" id="proximityRadiusRange" min="200" max="2000" step="100" value="500" 
+                     class="styled-slider" oninput="BusBuddyApp.onProximityRadiusChange(this.value)">
+              <div class="slider-labels">
+                <span>200m (Close)</span>
+                <span>500m (Standard)</span>
+                <span>2km (Early)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Telemetry ETA Countdown Card -->
+          <div class="panel-card telemetry-card">
+            <div class="telemetry-grid">
+              <div class="tele-item">
+                <span class="tele-label">DISTANCE TO STOP</span>
+                <span class="tele-value" id="teleDistance">-- km</span>
+                <span class="tele-sub" id="teleDistanceStatus">Awaiting Bus Ping</span>
+              </div>
+              <div class="tele-item">
+                <span class="tele-label">ESTIMATED ARRIVAL</span>
+                <span class="tele-value text-accent" id="teleEta">-- mins</span>
+                <span class="tele-sub" id="teleSpeed">Speed: 0 km/h</span>
+              </div>
+            </div>
+
+            <!-- Proximity Geofence Progress Visualizer -->
+            <div class="proximity-progress-wrap" id="proximityProgressWrap">
+              <div class="proximity-progress-bar" id="proximityProgressBar" style="width: 0%;"></div>
+            </div>
+            <div class="geofence-alert-callout" id="geofenceAlertCallout" style="display: none;">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span id="geofenceAlertMsg">Bus is approaching your stop!</span>
+            </div>
+          </div>
+
+          <!-- Route Stops Timeline -->
+          <div class="panel-card">
+            <div class="card-header">
+              <span class="card-title"><i class="fa-solid fa-timeline"></i> Route Stop Sequence</span>
+              <span class="stops-count-pill" id="studentStopCountPill">5 Stops</span>
+            </div>
+            <div class="stops-timeline" id="studentTimeline">
+              <!-- Dynamically populated with stops & status -->
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 2: DRIVER TELEMETRY CONSOLE -->
+        <section id="driverView" class="tab-content">
+          <div class="panel-card highlight-card driver-status-card">
+            <div class="card-header">
+              <span class="card-eyebrow">DRIVER GPS CONSOLE</span>
+              <span class="badge active-badge" id="driverGpsBadge">GPS Standby</span>
+            </div>
+            <h3 class="route-title">Bus-01 (Campus Express)</h3>
+            <p class="card-subtext">Broadcast your live coordinates so students receive accurate satellite tracking & early arrival notifications.</p>
+
+            <!-- Driver Main Action Buttons -->
+            <div class="driver-actions-grid">
+              <button id="btnStartTrip" class="btn btn-primary" onclick="BusBuddyApp.startDriverTrip()">
+                <i class="fa-solid fa-play"></i> Start Trip
+              </button>
+              <button id="btnPauseTrip" class="btn btn-warning" onclick="BusBuddyApp.pauseDriverTrip()" disabled>
+                <i class="fa-solid fa-pause"></i> Pause
+              </button>
+              <button id="btnEndTrip" class="btn btn-danger" onclick="BusBuddyApp.endDriverTrip()" disabled>
+                <i class="fa-solid fa-stop"></i> End Trip
+              </button>
+            </div>
+          </div>
+
+          <!-- GPS Telemetry Controls -->
+          <div class="panel-card">
+            <label class="input-label">GPS Source Mode:</label>
+            <div class="gps-mode-toggle">
+              <button id="btnGpsModeSim" class="mode-btn active" onclick="BusBuddyApp.setGpsMode('simulated')">
+                <i class="fa-solid fa-route"></i> Smart Route Simulation
+              </button>
+              <button id="btnGpsModeDevice" class="mode-btn" onclick="BusBuddyApp.setGpsMode('device')">
+                <i class="fa-solid fa-mobile-screen-button"></i> Device GPS Sensor
+              </button>
+            </div>
+
+            <!-- Simulation Speed Controls (If simulated) -->
+            <div id="simSpeedControls" class="sim-speed-box">
+              <label class="sub-label">Simulation Driving Speed:</label>
+              <div class="speed-btn-group">
+                <button class="speed-btn" onclick="BusBuddyApp.setSimSpeed(1, this)">1x (Normal)</button>
+                <button class="speed-btn active" onclick="BusBuddyApp.setSimSpeed(2, this)">2x (Demo)</button>
+                <button class="speed-btn" onclick="BusBuddyApp.setSimSpeed(4, this)">4x (Fast)</button>
+              </div>
+            </div>
+
+            <!-- Live Driver Telemetry Readouts -->
+            <div class="driver-readouts">
+              <div class="readout-box">
+                <span class="readout-label">LATITUDE</span>
+                <span class="readout-val" id="driverLat">13.0827</span>
+              </div>
+              <div class="readout-box">
+                <span class="readout-label">LONGITUDE</span>
+                <span class="readout-val" id="driverLng">80.2707</span>
+              </div>
+              <div class="readout-box">
+                <span class="readout-label">SPEED</span>
+                <span class="readout-val" id="driverSpeed">0 km/h</span>
+              </div>
+              <div class="readout-box">
+                <span class="readout-label">TARGET STOP</span>
+                <span class="readout-val text-accent" id="driverNextStop">Stop #1</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Driver Broadcast Alert Trigger -->
+          <div class="panel-card">
+            <label class="input-label" for="driverAnnouncementMsg">Send Instant Alert to Students:</label>
+            <div class="quick-announcements">
+              <button class="chip-btn" onclick="BusBuddyApp.quickBroadcast('Traffic Delay: Bus delayed by 10 mins.')">🚦 Traffic Delay</button>
+              <button class="chip-btn" onclick="BusBuddyApp.quickBroadcast('Arriving at campus in 5 mins!')">🎓 Reaching College</button>
+              <button class="chip-btn" onclick="BusBuddyApp.quickBroadcast('Trip Started: Departing initial stop.')">🚀 Trip Started</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: STOPS MANAGER & RE-CORRECTION -->
+        <section id="stopsView" class="tab-content">
+          <div class="panel-card highlight-card">
+            <div class="card-header">
+              <span class="card-eyebrow">ROUTE & STOP CONFIGURATION</span>
+              <span class="badge edit-badge" id="stopsTotalBadge">5 Stops Configured</span>
+            </div>
+            <h3 class="route-title">Manage & Re-correct Stops</h3>
+            <p class="card-subtext">Add stops, change order, or click & drag stop pins directly on the Google Satellite map to fix exact positions.</p>
+            
+            <div class="stops-action-bar">
+              <button class="btn btn-secondary btn-sm" onclick="BusBuddyApp.openAddStopModal()">
+                <i class="fa-solid fa-plus"></i> Add New Stop
+              </button>
+              <button class="btn btn-accent btn-sm" onclick="BusBuddyApp.saveStopsToSupabase()">
+                <i class="fa-solid fa-cloud-arrow-up"></i> Save to Supabase
+              </button>
+            </div>
+          </div>
+
+          <!-- Interactive Re-correct Mode Notice -->
+          <div class="recorrect-banner" id="recorrectBanner">
+            <div class="recorrect-icon"><i class="fa-solid fa-location-crosshairs"></i></div>
+            <div class="recorrect-text">
+              <strong>Interactive Satellite Re-correction Active</strong>
+              <span>Drag any stop marker on the satellite map or click the map to re-position!</span>
+            </div>
+          </div>
+
+          <!-- List of Stops with Re-correction, Re-ordering, and Coordinates -->
+          <div class="stops-manager-list" id="stopsManagerList">
+            <!-- Dynamically generated list items with Move Up, Move Down, Edit, Delete -->
+          </div>
+        </section>
+
+      </aside>
+
+      <!-- Center & Right: High-Definition Google Satellite Map Viewport -->
+      <section class="map-viewport">
+        <!-- Floating Map Overlays & Toolbars -->
+        <div class="map-top-bar">
+          <!-- Map Style Switcher (Google Satellite / Hybrid / Dark Street / Standard) -->
+          <div class="map-layer-selector glassmorphism">
+            <button class="layer-btn active" id="btnLayerHybrid" onclick="BusBuddyApp.setMapLayer('hybrid')" title="Google Satellite Imagery with Road & Landmark Labels">
+              <i class="fa-solid fa-earth-americas"></i> Satellite Hybrid
+            </button>
+            <button class="layer-btn" id="btnLayerSatellite" onclick="BusBuddyApp.setMapLayer('satellite')" title="Pure Google Satellite Imagery">
+              <i class="fa-solid fa-satellite"></i> Satellite
+            </button>
+            <button class="layer-btn" id="btnLayerDark" onclick="BusBuddyApp.setMapLayer('dark')" title="Dark Mode High-Contrast Streets">
+              <i class="fa-solid fa-moon"></i> Dark Streets
+            </button>
+            <button class="layer-btn" id="btnLayerStreets" onclick="BusBuddyApp.setMapLayer('streets')" title="Standard City Map">
+              <i class="fa-solid fa-map"></i> Streets
+            </button>
+          </div>
+
+          <!-- Center Map Quick Controls -->
+          <div class="map-action-controls">
+            <button class="map-btn" onclick="BusBuddyApp.centerOnBus()" title="Focus on Bus">
+              <i class="fa-solid fa-bus text-accent"></i> Center Bus
+            </button>
+            <button class="map-btn" onclick="BusBuddyApp.fitRouteBounds()" title="Fit Entire Route">
+              <i class="fa-solid fa-expand"></i> Fit Route
+            </button>
+          </div>
+        </div>
+
+        <!-- Google Maps / Satellite Container -->
+        <div id="mapContainer" class="map-container"></div>
+
+        <!-- Floating Live Telemetry HUD over Map -->
+        <div class="map-floating-hud glassmorphism" id="floatingHud">
+          <div class="hud-item">
+            <i class="fa-solid fa-gauge-high text-accent"></i>
+            <div>
+              <span class="hud-label">BUS SPEED</span>
+              <span class="hud-val" id="hudSpeed">0.0 km/h</span>
+            </div>
+          </div>
+          <div class="hud-divider"></div>
+          <div class="hud-item">
+            <i class="fa-solid fa-compass text-accent"></i>
+            <div>
+              <span class="hud-label">HEADING</span>
+              <span class="hud-val" id="hudHeading">0° N</span>
+            </div>
+          </div>
+          <div class="hud-divider"></div>
+          <div class="hud-item">
+            <i class="fa-solid fa-flag-checkered text-accent"></i>
+            <div>
+              <span class="hud-label">NEXT STOP</span>
+              <span class="hud-val" id="hudNextStop">Loading...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Announcement Toast Popup -->
+        <div id="notificationToast" class="notification-toast glassmorphism" style="display: none;">
+          <div class="toast-icon" id="toastIcon"><i class="fa-solid fa-bell"></i></div>
+          <div class="toast-body">
+            <strong id="toastTitle">Stop Proximity Alert</strong>
+            <p id="toastMessage">Bus is 450m away from your stop!</p>
+          </div>
+          <button class="toast-close" onclick="BusBuddyApp.hideToast()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ========================================================================= -->
+    <!-- MODAL 1: AUTHENTICATION (Roll Number / Student ID / Driver Login)         -->
+    <!-- ========================================================================= -->
+    <div id="authModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glassmorphism">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <i class="fa-solid fa-id-badge text-accent"></i>
+            <h2>BusBuddy Authentication</h2>
+          </div>
+          <button class="modal-close-btn" onclick="BusBuddyApp.closeAuthModal()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <div class="auth-role-tabs">
+          <button class="auth-tab active" id="authTabStudent" onclick="BusBuddyApp.setAuthRole('student')">
+            <i class="fa-solid fa-graduation-cap"></i> Student (Roll No)
+          </button>
+          <button class="auth-tab" id="authTabDriver" onclick="BusBuddyApp.setAuthRole('driver')">
+            <i class="fa-solid fa-steering-wheel"></i> Driver Console
+          </button>
+          <button class="auth-tab" id="authTabAdmin" onclick="BusBuddyApp.setAuthRole('admin')">
+            <i class="fa-solid fa-user-shield"></i> Coordinator
+          </button>
+        </div>
+
+        <!-- Student Form: Roll Number Login -->
+        <form id="studentAuthForm" class="auth-form" onsubmit="BusBuddyApp.handleStudentLogin(event)">
+          <div class="form-group">
+            <label for="inputRollNumber"><i class="fa-solid fa-hashtag text-accent"></i> College Roll Number / Student ID:</label>
+            <input type="text" id="inputRollNumber" class="form-input" placeholder="e.g. 2024CS101 or 2024EC204" required>
+            <small class="form-hint">Supabase queries your student record and links your preferred stop & bus automatically.</small>
+          </div>
+          <div class="form-group">
+            <label for="inputStudentName"><i class="fa-solid fa-user"></i> Full Name (Optional for new registrations):</label>
+            <input type="text" id="inputStudentName" class="form-input" placeholder="e.g. Aarav Patel">
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-block">
+              <i class="fa-solid fa-right-to-bracket"></i> Continue as Student
+            </button>
+          </div>
+          <!-- Quick Seed Roll Number Chips -->
+          <div class="quick-demo-section">
+            <span class="sub-label">Instant Demo Roll Numbers:</span>
+            <div class="demo-chips">
+              <span class="demo-chip" onclick="BusBuddyApp.fillRollNo('2024CS101', 'Aarav Patel')">2024CS101 (Green Gardens)</span>
+              <span class="demo-chip" onclick="BusBuddyApp.fillRollNo('2024EC204', 'Pooja Verma')">2024EC204 (Royal Residency)</span>
+              <span class="demo-chip" onclick="BusBuddyApp.fillRollNo('2024ME088', 'Vikram Singh')">2024ME088 (South Lake)</span>
+            </div>
+          </div>
+        </form>
+
+        <!-- Driver Form: Driver ID Login -->
+        <form id="driverAuthForm" class="auth-form" style="display: none;" onsubmit="BusBuddyApp.handleDriverLogin(event)">
+          <div class="form-group">
+            <label for="inputDriverId"><i class="fa-solid fa-id-card text-accent"></i> Driver ID / Badge Number:</label>
+            <input type="text" id="inputDriverId" class="form-input" placeholder="e.g. DRV-01" required>
+          </div>
+          <div class="form-group">
+            <label for="inputDriverName"><i class="fa-solid fa-user"></i> Driver Name:</label>
+            <input type="text" id="inputDriverName" class="form-input" placeholder="e.g. Rajesh Sharma">
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-block">
+              <i class="fa-solid fa-steering-wheel"></i> Open Driver GPS Console
+            </button>
+          </div>
+        </form>
+
+        <!-- Admin Form -->
+        <form id="adminAuthForm" class="auth-form" style="display: none;" onsubmit="BusBuddyApp.handleAdminLogin(event)">
+          <div class="form-group">
+            <label for="inputAdminKey"><i class="fa-solid fa-key text-accent"></i> Admin Access Key / Password:</label>
+            <input type="password" id="inputAdminKey" class="form-input" placeholder="Default: admin123" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-block">
+              <i class="fa-solid fa-shield-halved"></i> Access Stops & Routes Manager
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- MODAL 2: ADD / EDIT BUS STOP (With Re-correction)                         -->
+    <!-- ========================================================================= -->
+    <div id="stopModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glassmorphism">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <i class="fa-solid fa-map-pin text-accent"></i>
+            <h2 id="stopModalTitle">Add / Re-correct Bus Stop</h2>
+          </div>
+          <button class="modal-close-btn" onclick="BusBuddyApp.closeStopModal()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <form id="stopForm" class="auth-form" onsubmit="BusBuddyApp.handleSaveStop(event)">
+          <input type="hidden" id="editStopId">
+          
+          <div class="form-group">
+            <label for="inputStopName"><i class="fa-solid fa-tag"></i> Stop Name / Landmark:</label>
+            <input type="text" id="inputStopName" class="form-input" placeholder="e.g. Main Gate Crossing" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group col-half">
+              <label for="inputStopLat"><i class="fa-solid fa-arrows-up-down"></i> Latitude:</label>
+              <input type="number" step="0.000001" id="inputStopLat" class="form-input" placeholder="13.0827" required>
+            </div>
+            <div class="form-group col-half">
+              <label for="inputStopLng"><i class="fa-solid fa-arrows-left-right"></i> Longitude:</label>
+              <input type="number" step="0.000001" id="inputStopLng" class="form-input" placeholder="80.2707" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <button type="button" class="btn btn-secondary btn-sm btn-block" onclick="BusBuddyApp.pickCoordinatesFromMap()">
+              <i class="fa-solid fa-crosshairs text-accent"></i> Pick Pin From Google Satellite Map
+            </button>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group col-half">
+              <label for="inputStopOrder"><i class="fa-solid fa-list-ol"></i> Stop Order Sequence:</label>
+              <input type="number" id="inputStopOrder" class="form-input" min="1" max="50" value="1" required>
+            </div>
+            <div class="form-group col-half">
+              <label for="inputStopGeofence"><i class="fa-solid fa-circle-dot"></i> Alert Radius (m):</label>
+              <input type="number" id="inputStopGeofence" class="form-input" min="100" max="3000" step="50" value="500">
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-outline" onclick="BusBuddyApp.closeStopModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary">
+              <i class="fa-solid fa-check"></i> Save Stop
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- MODAL 3: SUPABASE & GOOGLE MAPS SETTINGS                                  -->
+    <!-- ========================================================================= -->
+    <div id="settingsModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glassmorphism">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <i class="fa-solid fa-sliders text-accent"></i>
+            <h2>Configuration & Cloud Keys</h2>
+          </div>
+          <button class="modal-close-btn" onclick="BusBuddyApp.closeSettingsModal()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <form id="settingsForm" class="auth-form" onsubmit="BusBuddyApp.handleSaveSettings(event)">
+          <!-- Google Maps API Key -->
+          <div class="form-group">
+            <label for="inputGoogleMapsKey">
+              <i class="fa-brands fa-google text-accent"></i> Google Maps JavaScript API Key (Optional):
+            </label>
+            <input type="text" id="inputGoogleMapsKey" class="form-input" placeholder="AIzaSy...">
+            <small class="form-hint">
+              Leave blank to use the built-in High-Resolution Google Satellite tile engine without requiring any billing or API key!
+            </small>
+          </div>
+
+          <!-- Supabase Project URL -->
+          <div class="form-group">
+            <label for="inputSupabaseUrl">
+              <i class="fa-solid fa-database text-accent"></i> Supabase Project URL:
+            </label>
+            <input type="url" id="inputSupabaseUrl" class="form-input" placeholder="https://your-project.supabase.co">
+          </div>
+
+          <!-- Supabase Anon Public Key -->
+          <div class="form-group">
+            <label for="inputSupabaseKey">
+              <i class="fa-solid fa-key text-accent"></i> Supabase Anon Key:
+            </label>
+            <input type="password" id="inputSupabaseKey" class="form-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+            <small class="form-hint">
+              Execute <span class="code-pill">supabase_schema.sql</span> in your Supabase SQL Editor, then paste keys here.
+            </small>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-outline" onclick="BusBuddyApp.resetDefaultConfig()">Reset Demo Data</button>
+            <button type="submit" class="btn btn-primary">
+              <i class="fa-solid fa-floppy-disk"></i> Apply & Connect
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Main JavaScript Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>

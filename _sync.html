@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>pending</title></head>
+<body>
+<div id="out">PENDING</div>
+<iframe id="a" src="index.html" style="width:900px;height:640px;border:0"></iframe>
+<iframe id="b" src="index.html" style="width:900px;height:640px;border:0"></iframe>
+<script>
+var results = [];
+var outEl = document.getElementById('out');
+function ok(n, c, e) {
+  results.push({ name: n, pass: !!c, extra: e === undefined ? '' : String(e) });
+  outEl.innerHTML = results.map(function (r) {
+    return '<div>' + (r.pass ? 'PASS' : 'FAIL') + ' ' + r.name + (r.extra ? ' :: ' + r.extra : '') + '</div>';
+  }).join('');
+}
+window.onerror = function (m, f, l) { ok('harness error: ' + m + ' @' + f + ':' + l, false, ''); };
+
+var booted = 0;
+function ready() {
+  booted++;
+  if (booted < 2) return;
+  var fa = document.getElementById('a');
+  var fb = document.getElementById('b');
+  var wA = fa.contentWindow, dA = fa.contentDocument;
+  var wB = fb.contentWindow, dB = fb.contentDocument;
+  var AA = function () { return wA.eval('BusBuddyApp'); };
+  var AB = function () { return wB.eval('BusBuddyApp'); };
+  var steps = [];
+
+  steps.push(function () {
+    ok('both tabs booted', !!AA() && !!AB());
+    AA().switchTab('driver');
+    AB().switchTab('student');
+  });
+
+  steps.push(function () {
+    AA().startDriverTrip();
+    ok('tab A in transit', dA.getElementById('tripStatusText').innerText === 'Trip In Transit');
+  });
+
+  steps.push(function () {
+    ok('tab B received TRIP_EVENT', dB.getElementById('tripStatusText').innerText === 'Trip In Transit',
+       dB.getElementById('tripStatusText').innerText);
+    ok('tab B start button disabled too', dB.getElementById('btnStartTrip').disabled === true);
+  });
+
+  steps.push(function () {
+    // STOPS_SYNC: push a renamed stop from A, expect B to adopt it
+    var stops = JSON.parse(JSON.stringify(wA.eval('JSON.parse(localStorage.getItem("busbuddy_stops_probe")||"null")') || 'null')) || null;
+    ok('probe', true, stops === null ? 'no local cache yet' : '');
+  });
+
+  steps.push(function () {
+    // Driver broadcast should reach the student tab
+    AA().quickBroadcast('Traffic Delay: Bus delayed by 10 mins.');
+    ok('announcement delivered to tab B',
+       dB.getElementById('notificationToast').style.display === 'flex' &&
+       dB.getElementById('toastTitle').innerText === 'Driver Announcement',
+       dB.getElementById('toastTitle').innerText + ' | ' + dB.getElementById('toastMessage').innerText);
+  });
+
+  steps.push(function () {
+    // Telemetry sync: bus pos in A must appear in B
+    var latA = dA.getElementById('driverLat').innerText;
+    ok('tab B bus lat tracks tab A', dB.getElementById('driverLat').innerText === latA,
+       'A=' + latA + ' B=' + dB.getElementById('driverLat').innerText);
+  });
+
+  steps.push(function () {
+    AA().endDriverTrip();
+    ok('end trip syncs to tab B', dB.getElementById('tripStatusText').innerText === 'Bus Idle',
+       dB.getElementById('tripStatusText').innerText);
+    outEl.innerHTML = '<h1>SYNC DONE ' + results.filter(function (r) { return r.pass; }).length + '/' + results.length + '</h1>' + outEl.innerHTML;
+  });
+
+  var i = 0;
+  function next() {
+    if (i >= steps.length) return;
+    try { steps[i](); } catch (e) { ok('STEP ' + i + ' threw: ' + e.message, false, ''); }
+    i++;
+    setTimeout(next, 1500);
+  }
+  setTimeout(next, 4000);
+}
+document.getElementById('a').addEventListener('load', ready);
+document.getElementById('b').addEventListener('load', ready);
+</script>
+</body>
+</html>

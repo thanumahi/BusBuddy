@@ -1,0 +1,201 @@
+﻿<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>pending</title></head>
+<body>
+<div id="out">PENDING</div>
+<iframe id="fr" src="index.html" style="width:1280px;height:800px;border:0"></iframe>
+<script>
+let results = [];
+const outEl = document.getElementById('out');
+function render() {
+  outEl.innerHTML = results.map(r => '<div>' + (r.pass ? 'PASS' : 'FAIL') + ' ' + r.name +
+    (r.extra ? ' :: ' + r.extra : '') + '</div>').join('');
+  document.title = 'checks=' + results.length;
+}
+function ok(name, cond, extra) {
+  results.push({ name, pass: !!cond, extra: extra === undefined ? '' : String(extra) });
+  render();
+}
+
+const fr = document.getElementById('fr');
+fr.addEventListener('load', () => {
+  const w = fr.contentWindow, d = fr.contentDocument;
+  // app.js declares BusBuddyApp with `const`, so it lives in the global lexical
+  // scope and is not reachable as a window property from the parent frame.
+  const APP = () => w.eval('BusBuddyApp');
+  const errors = [];
+  w.addEventListener('error', e => errors.push(e.message + ' @' + e.filename + ':' + e.lineno));
+  const oe = w.console.error, ow = w.console.warn;
+  w.console.error = function () { errors.push('console.error: ' + [].join.call(arguments, ' ')); oe.apply(w.console, arguments); };
+  w.console.warn = function () { errors.push('console.warn: ' + [].join.call(arguments, ' ')); ow.apply(w.console, arguments); };
+  w.onerror = (m, f, l) => errors.push('onerror: ' + m + ' @' + f + ':' + l);
+
+  const steps = [];
+  const step = (fn) => steps.push(fn);
+
+  step(() => {
+    const A = APP();
+    ok('app object exposed', !!A);
+    ok('no window errors on load', errors.length === 0, errors.join(' | '));
+    const mc = d.getElementById('mapContainer').className;
+    ok('leaflet map created', mc.indexOf('leaflet-container') >= 0, mc);
+    ok('tile elements present', d.querySelectorAll('img.leaflet-tile').length > 0, d.querySelectorAll('img.leaflet-tile').length);
+    ok('tiles marked loaded', d.querySelectorAll('img.leaflet-tile-loaded').length > 0, d.querySelectorAll('img.leaflet-tile-loaded').length);
+    ok('5 stop markers', d.querySelectorAll('.stop-marker-icon').length === 5, d.querySelectorAll('.stop-marker-icon').length);
+    ok('bus marker present', !!d.getElementById('busMarkerIcon'));
+    ok('route polyline + geofence present', d.querySelectorAll('path.leaflet-interactive').length >= 2, d.querySelectorAll('path.leaflet-interactive').length);
+    ok('student stop select populated', d.getElementById('selectStudentStop').options.length === 5, d.getElementById('selectStudentStop').options.length);
+    ok('timeline populated', d.querySelectorAll('#studentTimeline .timeline-item').length === 5);
+    ok('stops manager populated', d.querySelectorAll('#stopsManagerList .stop-manage-item').length === 5);
+    ok('stops badge shows 5', d.getElementById('stopsTotalBadge').innerText.indexOf('5') >= 0, d.getElementById('stopsTotalBadge').innerText);
+    ok('default target stop = stop-2', d.getElementById('selectStudentStop').value === 'stop-2', d.getElementById('selectStudentStop').value);
+    ok('target marker highlighted', !!d.querySelector('.stop-marker-icon.target-stop[id="stop-marker-stop-2"]'));
+    const dist = d.getElementById('teleDistance').innerText;
+    ok('distance computed', dist !== '-- km', dist);
+    ok('hud next stop populated', d.getElementById('hudNextStop').innerText !== 'Loading...', d.getElementById('hudNextStop').innerText);
+    ok('trip badge idle', d.getElementById('tripStatusText').innerText === 'Bus Idle', d.getElementById('tripStatusText').innerText);
+  });
+
+  step(() => {
+    const A = APP();
+    const before = d.getElementById('teleDistance').innerText;
+    A.onStudentStopChange('stop-5');
+    ok('distance updates on stop change', d.getElementById('teleDistance').innerText !== before, before + ' -> ' + d.getElementById('teleDistance').innerText);
+    A.onStudentStopChange('stop-2');
+  });
+
+  step(() => {
+    const A = APP();
+    A.switchTab('driver');
+    ok('driver tab active', d.getElementById('driverView').classList.contains('active') && !d.getElementById('studentView').classList.contains('active'));
+    A.switchTab('stops');
+    ok('stops tab active', d.getElementById('stopsView').classList.contains('active'));
+    A.switchTab('student');
+    ok('student tab active', d.getElementById('studentView').classList.contains('active'));
+  });
+
+  step(() => {
+    const A = APP();
+    ['satellite', 'dark', 'streets', 'hybrid'].forEach(layer => {
+      A.setMapLayer(layer);
+      ok('layer switch -> ' + layer, true);
+    });
+    ok('hybrid button re-activated', d.getElementById('btnLayerHybrid').classList.contains('active'));
+    ok('streets button not active', !d.getElementById('btnLayerStreets').classList.contains('active'));
+  });
+
+  step(() => {
+    const A = APP();
+    const first = d.querySelector('#stopsManagerList .stop-item-title').innerText;
+    A.moveStopOrder('stop-2', -1);
+    const moved = d.querySelector('#stopsManagerList .stop-item-title').innerText;
+    ok('moveStopOrder reorders', moved !== first, first + ' -> ' + moved);
+    const orders = Array.from(d.querySelectorAll('#stopsManagerList .stop-item-order')).map(e => e.innerText).join(',');
+    ok('orders renumbered 1..5', orders === '1,2,3,4,5', orders);
+    A.moveStopOrder('stop-2', 1);
+    ok('reorder reversible', d.querySelector('#stopsManagerList .stop-item-title').innerText === first);
+  });
+
+  step(() => {
+    const A = APP();
+    A.startRecorrectStop('stop-3');
+    ok('recorrect switches to stops tab', d.getElementById('stopsView').classList.contains('active'));
+    ok('recorrect marker has draggable-mode', !!d.querySelector('.stop-marker-icon.draggable-mode[id="stop-marker-stop-3"]'));
+    ok('recorrect card highlighted', !!d.querySelector('#stop-card-stop-3.active-recorrect'));
+    A.switchTab('student');
+    ok('leaving stops tab clears recorrect', !d.querySelector('.stop-marker-icon.draggable-mode'));
+  });
+
+  step(() => {
+    const A = APP();
+    A.openAddStopModal();
+    ok('stop modal opens', d.getElementById('stopModal').style.display === 'flex');
+    d.getElementById('inputStopName').value = 'Smoke Test Stop';
+    d.getElementById('inputStopLat').value = '13.0000';
+    d.getElementById('inputStopLng').value = '80.2000';
+    d.getElementById('inputStopOrder').value = '6';
+    A.handleSaveStop({ preventDefault(){} }); var newId = d.querySelector('#stopsManagerList .stop-manage-item:last-child').id.replace('stop-card-','');
+    ok('stop added -> 6', d.querySelectorAll('#stopsManagerList .stop-manage-item').length === 6, d.querySelectorAll('#stopsManagerList .stop-manage-item').length);
+    ok('select repopulated -> 6 options', d.getElementById('selectStudentStop').options.length === 6);
+    ok('modal closed after save', d.getElementById('stopModal').style.display === 'none');
+    w.confirm = () => true;
+    A.deleteStop(newId);
+    ok('stop deleted -> 5', d.querySelectorAll('#stopsManagerList .stop-manage-item').length === 5, d.querySelectorAll('#stopsManagerList .stop-manage-item').length);
+  });
+
+  step(() => {
+    const A = APP();
+    A.openAuthModal();
+    ok('auth modal opens', d.getElementById('authModal').style.display === 'flex');
+    A.setAuthRole('driver');
+    ok('driver form shown', d.getElementById('driverAuthForm').style.display === 'flex' && d.getElementById('studentAuthForm').style.display === 'none');
+    A.setAuthRole('admin');
+    ok('admin form shown', d.getElementById('adminAuthForm').style.display === 'flex');
+    A.setAuthRole('student');
+    d.getElementById('inputRollNumber').value = '2024ME088';
+    A.handleStudentLogin({ preventDefault() {} });
+  });
+
+  step(() => {
+    ok('student login -> name', d.getElementById('userDisplayName').innerText === 'Vikram Singh', d.getElementById('userDisplayName').innerText);
+    ok('student login -> stop-4', d.getElementById('selectStudentStop').value === 'stop-4', d.getElementById('selectStudentStop').value);
+    ok('profile tag roll no', d.getElementById('userRoleTag').innerText === 'Roll No: 2024ME088', d.getElementById('userRoleTag').innerText);
+    APP().onProximityRadiusChange('1200');
+    ok('radius label updates', d.getElementById('proximityRadiusVal').innerText === '1200 m', d.getElementById('proximityRadiusVal').innerText);
+  });
+
+  step(() => {
+    const A = APP();
+    A.switchTab('driver');
+    A.startDriverTrip();
+    ok('trip in transit badge', d.getElementById('tripStatusText').innerText === 'Trip In Transit', d.getElementById('tripStatusText').innerText);
+    ok('start disabled in transit', d.getElementById('btnStartTrip').disabled === true);
+    ok('pause enabled in transit', d.getElementById('btnPauseTrip').disabled === false);
+    ok('end enabled in transit', d.getElementById('btnEndTrip').disabled === false);
+  });
+
+  step(() => {
+    const before = d.getElementById('driverLat').innerText;
+    ok('simulation moved the bus', d.getElementById('driverLat').innerText !== before || d.getElementById('driverSpeed').innerText !== '0.0 km/h',
+       before + ' -> ' + d.getElementById('driverLat').innerText + ' speed=' + d.getElementById('driverSpeed').innerText);
+    ok('hud speed live', d.getElementById('hudSpeed').innerText !== '0.0 km/h', d.getElementById('hudSpeed').innerText);
+    APP().pauseDriverTrip();
+    ok('pause badge', d.getElementById('tripStatusText').innerText === 'Trip Paused', d.getElementById('tripStatusText').innerText);
+    APP().startDriverTrip();
+    APP().endDriverTrip();
+    ok('end resets idle', d.getElementById('tripStatusText').innerText === 'Bus Idle', d.getElementById('tripStatusText').innerText);
+  });
+
+  step(() => {
+    const A = APP();
+    A.quickBroadcast('Smoke test broadcast');
+    ok('toast visible', d.getElementById('notificationToast').style.display === 'flex');
+    ok('toast message set', d.getElementById('toastMessage').innerText === 'Smoke test broadcast', d.getElementById('toastMessage').innerText);
+    A.hideToast();
+    ok('toast hidden', d.getElementById('notificationToast').style.display === 'none');
+    A.openSettingsModal();
+    ok('settings modal opens', d.getElementById('settingsModal').style.display === 'flex');
+    A.closeSettingsModal();
+    ok('centerOnBus + fitRouteBounds callable', (A.centerOnBus() === undefined && A.fitRouteBounds() === undefined));
+  });
+
+  step(() => {
+    ok('no runtime errors during run', errors.length === 0, errors.join(' | '));
+    const fails = results.filter(r => !r.pass).length;
+    outEl.innerHTML = '<h1>RESULT ' + (results.length - fails) + '/' + results.length + ' PASSED; ' + fails + ' FAILED</h1>' + outEl.innerHTML;
+  });
+
+  let i = 0;
+  function next() {
+    if (i >= steps.length) return;
+    try { steps[i](); } catch (e) { ok('STEP ' + i + ' threw: ' + e.message, false, e.stack ? e.stack.split('\n')[0] : ''); }
+    i++;
+    setTimeout(next, 1200);
+  }
+  setTimeout(next, 5000);
+});
+</script>
+</body>
+</html>
+
+

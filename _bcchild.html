@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html><body>
+<script>
+var role = new URLSearchParams(location.search).get('role');
+var bc = new BroadcastChannel('probe_chan2');
+var got = [];
+bc.onmessage = function (e) { got.push(e.data); };
+setTimeout(function () {
+  if (role === 'sender') {
+    bc.postMessage('ping-from-A');
+  } else {
+    parent.postMessage(JSON.stringify(got), '*');
+  }
+}, 800);
+</script>
+</body></html>

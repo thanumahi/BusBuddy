@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html><body>
+<div id="out">PENDING</div>
+<iframe id="a" src="_bcchild.html?role=sender"></iframe>
+<iframe id="b" src="_bcchild.html?role=receiver"></iframe>
+<script>
+var done = 0;
+window.onmessage = function (e) {
+  document.getElementById('out').textContent = 'RESULT ' + e.data;
+};
+</script>
+</body></html>

@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html><body>
+<div id="out">PENDING</div>
+<script>
+var log = [];
+var bc = new BroadcastChannel('probe_chan');
+bc.onmessage = function (e) { log.push('recv:' + e.data); };
+setTimeout(function () { bc.postMessage('hello'); }, 300);
+setTimeout(function () {
+  document.getElementById('out').textContent = 'RESULT log=' + JSON.stringify(log);
+}, 1500);
+</script>
+</body></html>
